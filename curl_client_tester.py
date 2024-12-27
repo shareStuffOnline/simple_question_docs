@@ -29,7 +29,7 @@ def run_test():
     threads = []
 
     # Create two threads
-    for thread_id in range(10):
+    for thread_id in range(2):
         t = threading.Thread(target=make_api_calls, args=(thread_id, 100))
         threads.append(t)
 
