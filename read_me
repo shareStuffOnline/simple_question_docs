@@ -1,0 +1,148 @@
+in /home/fire/Documents/BWC_AI i run 
+python3 ./load_balancer.py
+ Server listening on 127.0.0.1:5000
+this gives me a raw http loop that forwards to my ollama hosts on 11434
+
+i can run a curl_client_complete_tester.py which multithreaded tests the hosts - they work
+i can run a curl_client_chat_tester.py which multithreaded tests the hosts - they work
+i can run a curl_client_embed_tester.py which multithreaded tests the hosts - they work
+
+[Thread 1] Request 50 => Elapsed: 0.1044s, Status: 0, Output: {"model":"qwen:0.5b","created_at":"2024-12-28T22:08:46.881569073Z","response":"The sky appears blue because it contains a concentration of oxygen in the air. This oxygen binds to the blue-color pigments on the surface of the Earth, giving the sky its blue color.","done":true,"done_reason":"stop","context":[151644,872,198,10234,374,279,12884,6303,30,151645,198,151644,77091,198,785,12884,7952,6303,1576,432,5610,264,19950,315,23552,304,279,3720,13,1096,23552,57485,311,279,6303,12,3423,23694,1368,389,279,7329,315,279,9237,11,7086,279,12884,1181,6303,1894,13],"total_duration":96072049,"load_duration":9749316,"prompt_eval_count":14,"prompt_eval_duration":1000000,"eval_count":39,"eval_duration":84000000}
+
+
+
+
+POST /api/generate
+
+Generate a response for a given prompt with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
+Parameters
+
+    model: (required) the model name
+    prompt: the prompt to generate a response for
+    suffix: the text after the model response
+    images: (optional) a list of base64-encoded images (for multimodal models such as llava)
+
+Generate a chat completion
+
+POST /api/chat
+
+Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using "stream": false. The final response object will include statistics and additional data from the request.
+Parameters
+
+    model: (required) the model name
+    messages: the messages of the chat, this can be used to keep a chat memory
+    tools: tools for the model to use if supported. Requires stream to be set to false
+
+The message object has the following fields:
+
+    role: the role of the message, either system, user, assistant, or tool
+    content: the content of the message
+    images (optional): a list of images to include in the message (for multimodal models such as llava)
+    tool_calls (optional): a list of tools the model wants to use
+
+
+
+this should work
+
+curl http://localhost:5000/api/chat -d '{
+  "model": "qwen:0.5b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "why is the sky blue?"
+    },
+    {
+      "role": "assistant",
+      "content": "due to rayleigh scattering."
+    },
+    {
+      "role": "user",
+      "content": "how is that different than mie scattering?"
+    }
+  ],
+  "stream":false
+}'
+
+
+
+Generate Embeddings
+
+POST /api/embed
+
+Generate embeddings from a model
+Parameters
+
+    model: name of model to generate embeddings from
+    input: text or list of text to generate embeddings for
+
+
+curl http://localhost:5000/api/embed -d '{
+  "model": "qwen:0.5b",
+  "input": "Why is the sky blue?"
+}'
+
+returns embeddings
+
+we can also request a series of embeddings like Request (Multiple input)
+
+curl http://localhost:5000/api/embed -d '{
+  "model": "qwen:0.5b",
+  "input": ["Why is the sky blue?", "Why is the grass green?"]
+}'
+
+
+I have a working_data_flatener_to_jsonl.py and this converts my working data folder into a jsonl file exampled by
+{"filename": "fishing_log.txt", "text": "frank caught 5 fish stan caught 3 fish frank had red fish stan had blue fish "}
+
+
+ I need to send this jsonl data into the server and get embed data - and store that embed data 
+ 
+cat working_data/documents.jsonl | python3 embed_docs.py > working_data/embedded_docs.jsonl
+
+now i have the embed data in my jsonl file called embedded_docs.jsonl next to the original documents.jsonl and the text files so all are here if need to be referenced however the embedded_docs.jsonl has everything 
+(segmented) {"filename": "fishing_log.txt", "text": "frank caught 5 fish stan caught 3 fish frank had red fish stan had blue fish ", "embedding": [0.0039491095, -0.0023763624, -0.04043066, 0.0052905427, 0.00043159755, 0.031481415, -0.0023340501, -0.043013714, 0.00549477, 0.0534345, -0.026694907, 0.01145565, -0.014151252, 0.010817734, -0.005400824, -0.007709337, 0.023803357, 0.050483003, 0.03667117, 0.06509019, -0.03486797, -0.009700192, 0.008288697, -0.014841787,
+
+
+
+
+build_index.py builds an index from the embedded_docs.jsonl (faiss, indexflatl2, partition or approximate) and saves this index and metadata for lookups inside of the working_data folder next to documents.jsonl and embedded_docs.jsonl
+
+how do i Index the embeddings from embedded_docs.jsonl to  do top-k similarity queries?
+
+	taking a query text - and embedding it the same way as the index of embeddings
+	load the index and metadata - preforming a top - k similarity search
+	
+This acts against our embeding server
+	curl http://localhost:5000/api/embed -d '{
+  "model": "qwen:0.5b",
+  "input": "Why is the sky blue?"
+}'
+
+
+#!/usr/bin/env bash
+set -e  # Exit on first error
+
+echo "Embedding documents..."
+cat working_data/documents.jsonl | python3 embed_docs.py > working_data/embedded_docs.jsonl
+
+echo "Building Faiss index..."
+cat working_data/embedded_docs.jsonl | python3 build_index.py
+
+echo "Running query against the index..."
+ python3 query_index.py --query "how many fish did frank catch?" --model "qwen:0.5b" --top_k 3
+
+#1 | Distance: 0.8721266984939575
+   Filename: fishing_log.txt
+   Text: frank caught 5 fish stan caught 3 fish frank had red fish stan had blue fish ...
+
+#2 | Distance: 3.4028234663852886e+38
+   Filename: fishing_log.txt
+   Text: frank caught 5 fish stan caught 3 fish frank had red fish stan had blue fish ...
+
+#3 | Distance: 3.4028234663852886e+38
+   Filename: fishing_log.txt
+   Text: frank caught 5 fish stan caught 3 fish frank had red fish stan had blue fish ...
+
+
+
+	
